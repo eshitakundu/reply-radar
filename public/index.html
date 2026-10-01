@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reply Radar</title>
+<style>
+:root{--bg:#fafafa;--fg:#111;--mute:#737373;--line:#ddd;--accent:#c2410c;--bad:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#0e0e0e;--fg:#eee;--mute:#8a8a8a;--line:#2a2a2a;--accent:#fb923c;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 ui-monospace,Menlo,Consolas,monospace}
+main{max-width:640px;margin:0 auto;padding:24px 16px 80px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+h1{font-size:18px;margin:0}
+.sub{color:var(--mute);margin:2px 0 0}
+.btn{display:inline-block;background:none;color:inherit;border:1px solid var(--line);padding:6px 12px;font:inherit;cursor:pointer;text-decoration:none}
+.btn:hover{border-color:var(--fg)}.btn:disabled{opacity:.5;cursor:default}
+.btn.p{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.m{color:var(--mute);font-size:13px}.bad{color:var(--bad)}
+a{color:var(--accent)}
+#report{margin:14px 0 0;min-height:1.4em}
+.ctl{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.ctl label{color:var(--mute);font-size:13px}
+select{background:var(--bg);color:var(--fg);border:1px solid var(--line);padding:5px 8px;font:inherit;font-size:13px;max-width:100%}
+#manual{display:none;margin:10px 0}
+textarea{width:100%;background:transparent;color:inherit;border:1px solid var(--line);padding:10px;font:inherit;resize:vertical}
+.card{border-top:1px solid var(--line);padding:16px 0}
+.who{font-weight:700}
+.post{margin:4px 0 12px;white-space:pre-wrap;word-break:break-word;color:var(--mute)}
+.lbl{font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.reply{height:84px}
+.acts{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}.sp{flex:1}
+.note{margin-top:8px;font-size:13px}
+footer{margin-top:36px;border-top:1px solid var(--line);padding-top:12px}
+details{margin-top:10px}summary{cursor:pointer;color:var(--mute)}
+details textarea{height:56px;margin:4px 0 8px}
+pre{white-space:pre-wrap;font:inherit;font-size:13px;color:var(--mute)}
+</style></head><body><main>
+<header>
+  <div><h1>Reply Radar</h1><p class="sub" id="ready">Loading…</p></div>
+  <button class="btn p" id="import">Import posts</button>
+</header>
+<div class="ctl">
+  <label>Mood <select id="mood"></select></label>
+  <label>My site <select id="promo"></select></label>
+  <span class="m" id="ctlHint"></span>
+</div>
+<div id="report" class="m"></div>
+<div id="manual">
+  <p class="m" id="manualWhy"></p>
+  <textarea id="manualText" style="height:90px" placeholder="Press Ctrl+V here, then click Import"></textarea>
+  <button class="btn p" id="manualGo">Import</button>
+</div>
+<div id="list"></div>
+
+<footer class="m">
+  <div id="views"></div>
+  <details><summary>Diagnostics</summary><pre id="diag"></pre></details>
+  <details><summary>Settings</summary>
+    <p>Topics (comma separated)</p><textarea id="topics"></textarea>
+    <p>Your voice</p><textarea id="voice"></textarea>
+    <p>About you</p><textarea id="about"></textarea>
+    <p>Your site (name, link, one line on what it does; used when "My site" is on)</p><textarea id="site" placeholder="e.g. Acme (acme.example): a tool that does X for Solana traders"></textarea>
+    <button class="btn" id="save">Save</button> <button class="btn" id="defaults">Reset to defaults</button>
+    <button class="btn" id="resetHist">Forget done / skipped / filtered history</button>
+    <span id="setMsg"></span>
+  </details>
+  <details><summary>Bookmark setup (once)</summary>
+    <p>1. Drag this to your bookmarks bar: <a id="bm" href="#">Copy X posts</a></p>
+    <p>2. On x.com open a search, scroll a little, click the bookmark. You'll see a black "copied N posts" message.</p>
+    <p>3. Come back here and click <b>Import posts</b>.</p>
+  </details>
+</footer>
+
+<script src="/extract.js"></script>
+<script>
+const PAGE_V="{{V}}";
+let flash=null,S=null,view='queue',edits={},didx={},lastAuto='',busy=false;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(m,u,b){
+  const r=await fetch(u,{method:m,headers:b?{'Content-Type':'application/json'}:undefined,body:b&&JSON.stringify(b)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+/* ---------- state + rendering ---------- */
+async function load(){
+  try{S=await api('GET','/api/state')}catch(e){$('ready').textContent='Cannot reach the Reply Radar server. Is npm start still running?';return}
+  if(S.assetVersion!==PAGE_V){location.reload();return}   // server was updated; never run stale page code
+  render();
+}
+const plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
+function reportLine(r){
+  if(!r)return'';
+  if(r.error)return `<span class="bad">${esc(r.error)}</span>`;
+  const f=r.filtered||{},fl=Object.entries(f).filter(([,n])=>n).map(([k,n])=>`${n} ${k}`);
+  const parts=[`${r.found} found`,`${r.added} added`];
+  if(r.duplicates)parts.push(`${r.duplicates} duplicate`);
+  if(r.ownSkipped)parts.push(`${r.ownSkipped} skipped (my own post)`);
+  if(r.invalid)parts.push(`${r.invalid} unreadable`);
+  fl.forEach(x=>parts.push(x+' filtered'));
+  return parts.join(' · ');
+}
+function visible(){
+  const st=view==='queue'?'new':view;
+  return S.posts.filter(p=>p.status===st);
+}
+function render(){
+  const c=S.counts;
+  $('ready').textContent=view==='queue'?(c.queue?`${plural(c.queue,'post')} ready`:'Nothing in the queue yet'):`${view} (${visible().length})`;
+  $('report').innerHTML=flash&&flash.until>Date.now()?flash.html:reportLine(S.lastImport);
+  $('views').innerHTML=(view==='queue'?'':`<a href="#" data-view="queue">← back to queue</a> · `)+
+    ['done','skipped','filtered'].filter(v=>v!==view).map(v=>`<a href="#" data-view="${v}">${v} ${c[v]}</a>`).join(' · ');
+  renderCards();
+  renderDiag();
+  for(const f of['topics','voice','about','site'])if(document.activeElement!==$(f))$(f).value=S.profile[f];
+  fillControls();
+}
+const sig=p=>[p.id,p.status,p.gen?.state,p.gen?.attempts,p.gen?.error,(p.drafts||[]).join('|'),p.openedAt,view].join('~');
+function cardHtml(p){
+  const dr=p.drafts||[];
+  const i=didx[p.id]||0;
+  const val=edits[p.id]??dr[i]??'';
+  let body;
+  if(view==='filtered'){
+    body=`<div class="m">filtered: ${esc(p.filterReason||'')}</div><div class="acts"><button class="btn" data-act="restore">Show in queue anyway</button></div>`;
+  }else if(view!=='queue'){
+    body=`<div class="acts"><button class="btn" data-act="restore">Back to queue</button></div>`;
+  }else if(p.gen?.state==='ok'&&dr.length){
+    body=`<div class="lbl">Reply</div><textarea class="reply" data-role="reply">${esc(val)}</textarea>
+      <div class="m" data-role="count"></div>
+      <div class="acts">
+        <button class="btn p" data-act="open">Copy reply + Open on X</button>
+        ${dr.length>1?'<button class="btn" data-act="other">Other version</button>':''}
+        <button class="btn" data-act="retry" title="Write new replies using the current mood and site settings">Rewrite</button>
+        ${p.openedAt?'<button class="btn" data-act="done">Done, I posted it</button>':''}
+        <span class="sp"></span><button class="btn" data-act="skip">Skip</button>
+      </div>
+      ${p.openedAt?'<div class="note m">Reply copied. Paste it into the reply box on X (Ctrl+V), post it, then come back and press Done.</div>':''}`;
+  }else if(p.gen?.state==='error'){
+    body=`<div class="note bad">Could not write a reply: ${esc(p.gen.error||'unknown error')}</div>
+      <div class="acts"><button class="btn p" data-act="retry">Retry</button><span class="sp"></span><button class="btn" data-act="skip">Skip</button></div>`;
+  }else{
+    body=`<div class="note m">Writing reply…</div><div class="acts"><span class="sp"></span><button class="btn" data-act="skip">Skip</button></div>`;
+  }
+  return `<div class="who">@${esc(p.author)}${p.url?` <a class="m" href="${esc(p.url)}" target="_blank" rel="noopener">view post ↗</a>`:''}</div>
+    <div class="post">${esc(p.text)}</div>${body}`;
+}
+function renderCards(){
+  const list=visible(),root=$('list');
+  if(!list.length){
+    const why=view==='queue'
+      ?'Open an X search, click the bookmark, come back and press <b>Import posts</b>.'
+      :'Nothing here.';
+    root.innerHTML=`<p class="m">${why}</p>`;return;
+  }
+  const keep=new Set(list.map(p=>p.id));
+  [...root.children].forEach(el=>{if(!el.dataset||!keep.has(el.dataset.id))el.remove()});
+  let prev=null;
+  for(const p of list){
+    let el=[...root.children].find(e=>e.dataset&&e.dataset.id===p.id);
+    const s=sig(p);
+    if(!el){el=document.createElement('div');el.className='card';el.dataset.id=p.id}
+    if(el.dataset.sig!==s){el.innerHTML=cardHtml(p);el.dataset.sig=s;updateCount(el)}
+    const want=prev?prev.nextSibling:root.firstChild;
+    if(want!==el)root.insertBefore(el,want);
+    prev=el;
+  }
+}
+function updateCount(el){
+  const ta=el.querySelector('textarea[data-role=reply]'),c=el.querySelector('[data-role=count]');
+  if(ta&&c){const n=ta.value.length;c.textContent=n+'/280';c.className='m'+(n>280?' bad':'')}
+}
+function renderDiag(){
+  const d=S.diagnostics,r=S.lastImport,g=d.generation;
+  const lines=[
+    r?`Last import (${new Date(r.at).toLocaleTimeString()}): ${reportLine(r).replace(/<[^>]+>/g,'')}`:'No import yet.',
+    r&&!r.error?`  parsed ${r.found}, accepted ${r.added}, duplicates ${r.duplicates}, own posts ${r.ownSkipped}, unreadable ${r.invalid}, filtered ${JSON.stringify(r.filtered)}`:'',
+    `Replies: ${g.queue.ok} written, ${g.queue.pending+g.queue.working} in progress, ${g.queue.error} failed  (this session: ${g.session.ok} ok, ${g.session.failed} failed)`,
+    `Model: ${d.model}   OpenRouter key: ${d.hasKey?'found':'MISSING (add OPENROUTER_API_KEY to .env, restart)'}`,
+    (d.myHandle?`My handle (skipped on import): @${d.myHandle}`:"My handle: not set (MY_HANDLE in .env)"),
+    `Server started ${new Date(d.startedAt).toLocaleString()}   data format v${d.schema}   folder: ${d.dataDir}`,
+    ...d.notes.map(n=>'Note: '+n),
+  ].filter(Boolean);
+  $('diag').textContent=lines.join('\n');
+}
+
+/* ---------- card actions ---------- */
+$('list').addEventListener('input',e=>{
+  const el=e.target.closest('.card');if(!el||e.target.dataset.role!=='reply')return;
+  edits[el.dataset.id]=e.target.value;updateCount(el);
+});
+$('list').addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-act]');if(!b)return;
+  const el=b.closest('.card'),id=el.dataset.id,p=S.posts.find(x=>x.id===id),act=b.dataset.act;
+  try{
+    if(act==='other'){
+      const n=p.drafts.length;didx[id]=((didx[id]||0)+1)%n;delete edits[id];
+      const ta=el.querySelector('textarea');ta.value=p.drafts[didx[id]];updateCount(el);return;
+    }
+    if(act==='open'){
+      const ta=el.querySelector('textarea');
+      // 1) copy synchronously inside the click so the browser allows it, 2) open the exact post.
+      ta.select();let copied=false;try{copied=document.execCommand('copy')}catch{}
+      try{await navigator.clipboard.writeText(ta.value);copied=true}catch{}
+      if(p.url)window.open(p.url,'_blank','noopener');
+      await api('POST',`/api/posts/${id}/opened`,{});
+      if(!copied)say('Could not copy automatically. Select the reply text and press Ctrl+C.',true);
+    }
+    if(act==='skip')await api('POST',`/api/posts/${id}/status`,{status:'skipped'});
+    if(act==='done')await api('POST',`/api/posts/${id}/status`,{status:'done'});
+    if(act==='restore')await api('POST',`/api/posts/${id}/restore`,{});
+    if(act==='retry'){delete edits[id];delete didx[id];await api('POST',`/api/posts/${id}/retry`,{})}
+  }catch(err){say(err.message,true)}
+  load();
+});
+$('views').addEventListener('click',e=>{const a=e.target.closest('a[data-view]');if(!a)return;e.preventDefault();view=a.dataset.view;render()});
+function say(t,bad){flash={html:`<span class="${bad?'bad':''}">${esc(t)}</span>`,until:Date.now()+8000};$('report').innerHTML=flash.html}
+
+/* ---------- import ---------- */
+function showManual(why){$('manual').style.display='block';$('manualWhy').textContent=why;$('manualText').focus()}
+async function doImport(text,auto){
+  if(busy)return;busy=true;
+  try{
+    const r=await api('POST','/api/import',{text});
+    $('manual').style.display='none';$('manualText').value='';
+    try{sessionStorage.setItem('rrLast',text)}catch{}
+    view='queue';await load();
+    const rp=r.report;
+    flash=null;
+    if(rp.added===0&&rp.duplicates&&!rp.filtered['spam']&&!rp.filtered['low relevance'])say(reportLine(rp)+' · nothing new since last time');
+  }catch(e){
+    await load();
+    if(!auto){say(e.message,true);showManual('Paste the copied posts here instead:')}
+  }finally{busy=false}
+}
+$('import').onclick=async()=>{
+  let text='';
+  try{text=await navigator.clipboard.readText()}
+  catch(e){return showManual('The browser blocked clipboard access ('+(e.name||'error')+'). Paste the copied posts here instead:')}
+  if(!text.trim())return showManual('The clipboard is empty. Click the bookmark on X first, or paste here:');
+  doImport(text,false);
+};
+$('manualGo').onclick=()=>doImport($('manualText').value,false);
+document.addEventListener('paste',e=>{
+  const t=e.clipboardData&&e.clipboardData.getData('text');
+  if(t&&t.startsWith('RR1')&&e.target.tagName!=='TEXTAREA'){e.preventDefault();doImport(t,false)}
+});
+// Convenience only: when you switch back from X, import automatically if the browser allows reading the clipboard.
+window.addEventListener('focus',async()=>{
+  try{
+    const t=await navigator.clipboard.readText();
+    let last='';try{last=sessionStorage.getItem('rrLast')||''}catch{}
+    if(t.startsWith('RR1')&&t!==last&&t!==lastAuto){lastAuto=t;doImport(t,true)}
+  }catch{}
+});
+
+/* ---------- settings ---------- */
+const settingsBody=()=>({topics:$('topics').value,voice:$('voice').value,about:$('about').value,site:$('site').value,mood:$('mood').value,promo:$('promo').value});
+function fillControls(){
+  for(const [id,list,cur] of [['mood',S.moods,S.profile.mood],['promo',S.promos,S.profile.promo]]){
+    const el=$(id);
+    if(document.activeElement===el)continue;
+    if(el.options.length!==list.length)el.innerHTML=list.map(o=>`<option value="${o.key}">${esc(o.label)}</option>`).join('');
+    el.value=cur;
+  }
+  $('ctlHint').innerHTML=S.profile.promo!=='off'&&!S.profile.site?'Add your site in <a href="#" id="openSettings">Settings</a> so replies can mention it.':'Applies to newly written replies. Use Rewrite on a card to redo it.';
+  const os=$('openSettings');if(os)os.onclick=e=>{e.preventDefault();const d=$('site').closest('details');d.open=true;$('site').focus()};
+}
+async function saveControls(){await api('PUT','/api/settings',settingsBody());say('Saved. New replies will use this.');load()}
+$('mood').onchange=saveControls;$('promo').onchange=saveControls;
+$('save').onclick=async()=>{await api('PUT','/api/settings',settingsBody());$('setMsg').textContent=' Saved.';await load()};
+$('defaults').onclick=async()=>{await api('PUT','/api/settings',{});$('setMsg').textContent=' Back to defaults.';await load();for(const f of['topics','voice','about','site'])$(f).value=S.profile[f]};
+$('resetHist').onclick=async()=>{if(confirm('Forget all done, skipped and filtered posts? They may be imported again.')){await api('POST','/api/history/reset',{});load()}};
+
+/* ---------- bookmarklet + polling ---------- */
+const BM='(function(){'+rrRun.toString()+';rrRun(document,location,navigator)})()';
+$('bm').href='javascript:'+encodeURIComponent(BM);
+$('bm').onclick=e=>{e.preventDefault();alert('Drag this link to your bookmarks bar. Do not click it here.')};
+load();
+setInterval(()=>{ if(!document.hidden) load() },2500);
+</script></main></body></html>

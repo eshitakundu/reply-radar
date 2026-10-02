@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>onchain - Search / X</title></head>
+<body>
+<!-- Shaped like x.com's real DOM: relative permalinks, data-testid hooks, counts, nav text, ads, quote tweets. -->
+<nav><a href="/home">Home</a><a href="/explore">Explore</a><a href="/notifications">Notifications</a></nav>
+<div role="tablist"><span>Top</span><span>Latest</span></div>
+<main>
+  <article data-testid="tweet">
+    <div data-testid="User-Name"><a href="/alice"><span>Alice Dev</span></a><a href="/alice"><span>@alice</span></a><span>·</span><a href="/alice/status/1900000000000000001"><time datetime="2026-09-29T10:00:00Z">2h</time></a></div>
+    <div data-testid="tweetText"><span>anyone building perps on onchain?</span><span> thinking about the margin engine</span></div>
+    <div role="group"><button data-testid="reply">3</button><button data-testid="retweet">12</button><button data-testid="like">1.2K</button><span>Views 40K</span></div>
+  </article>
+  <article data-testid="tweet">
+    <div data-testid="User-Name"><a href="/bob"><span>Bob</span></a><a href="/bob"><span>@bob</span></a><a href="/bob/status/1900000000000000002"><time>3h</time></a></div>
+    <div data-testid="tweetText"><span>hackathon submission day. shipped at 3am, regret nothing</span></div>
+    <div role="group"><button data-testid="reply">1</button><button data-testid="like">88</button></div>
+    <div role="link"><!-- quoted tweet must not leak into the text -->
+      <div data-testid="User-Name"><span>Quoted Person</span></div>
+      <div data-testid="tweetText"><span>QUOTED TEXT SHOULD NOT APPEAR FIRST</span></div>
+    </div>
+  </article>
+  <article data-testid="tweet">
+    <div data-testid="User-Name"><a href="https://x.com/carol"><span>Carol</span></a><a href="/carol/status/1900000000000000003"><time>5h</time></a></div>
+    <div data-testid="tweetText"><span>ai agents trading memecoins is going to be chaos</span></div>
+    <div role="group"><button data-testid="like">12</button></div>
+  </article>
+  <article data-testid="tweet"><!-- my own post -->
+    <div data-testid="User-Name"><a href="/myhandle"><span>Acme</span></a><a href="/myhandle/status/1900000000000000004"><time>6h</time></a></div>
+    <div data-testid="tweetText"><span>The wait is almost over. Acme on defi</span></div>
+  </article>
+  <article data-testid="tweet">
+    <div data-testid="User-Name"><a href="/spammer"><span>Free SOL</span></a><a href="/spammer/status/1900000000000000005"><time>6h</time></a></div>
+    <div data-testid="tweetText"><span>Drop your SOL wallet, first 800 only.</span></div>
+  </article>
+  <article data-testid="tweet">
+    <div data-testid="User-Name"><a href="/dave"><span>Dave</span></a><a href="/dave/status/1900000000000000006"><time>7h</time></a></div>
+    <div data-testid="tweetText"><span>my cat did a funny thing today at the park</span></div>
+  </article>
+  <article data-testid="tweet"><!-- promoted -->
+    <div data-testid="placementTracking"></div>
+    <div data-testid="User-Name"><a href="/bigbrand"><span>Brand</span></a><a href="/bigbrand/status/1900000000000000007"><time>Ad</time></a></div>
+    <div data-testid="tweetText"><span>Buy our onchain course today</span></div>
+  </article>
+  <article data-testid="tweet"><!-- virtualised list repeats an item -->
+    <div data-testid="User-Name"><a href="/alice"><span>Alice Dev</span></a><a href="/alice/status/1900000000000000001"><time>2h</time></a></div>
+    <div data-testid="tweetText"><span>anyone building perps on onchain?</span><span> thinking about the margin engine</span></div>
+  </article>
+  <article data-testid="tweet"><!-- no permalink at all: cannot be read -->
+    <div data-testid="tweetText"><span>orphan text without a link</span></div>
+  </article>
+</main>
+</body></html>
